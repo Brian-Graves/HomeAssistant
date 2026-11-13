@@ -21,3 +21,9 @@ Custom Home Assistant automation blueprints and configurations.
 * **Direct Import URL**: `https://github.com/Brian-Graves/HomeAssistant/blob/main/blueprints/automation/ev_unplugged_reminder.yaml`
 * **One-Click Import**:
   [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FBrian-Graves%2FHomeAssistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fev_unplugged_reminder.yaml)
+
+### 4. Doors Left Open While Area Unoccupied
+* **Path**: [`blueprints/automation/doors_left_open_unoccupied.yaml`](blueprints/automation/doors_left_open_unoccupied.yaml)
+* **Direct Import URL**: `https://github.com/Brian-Graves/HomeAssistant/blob/main/blueprints/automation/doors_left_open_unoccupied.yaml`
+* **One-Click Import**:
+  [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FBrian-Graves%2FHomeAssistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fdoors_left_open_unoccupied.yaml)

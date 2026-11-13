@@ -1,0 +1,131 @@
+blueprint:
+  name: Doors Left Open While Area Unoccupied
+  description: >
+    Triggers when one or more door or cover sensors remain open while all selected
+    occupancy sensors (such as camera zone occupancy or room motion sensors) report
+    unoccupied for a configurable duration. Also exposes {{ open_door_names }} and
+    {{ open_door_entities }} variables for use inside notification or TTS actions,
+    plus an optional recovery action block when all monitored doors close.
+  domain: automation
+  input:
+    door_sensors:
+      name: Door or Cover Sensors
+      description: >
+        One or more door, garage door, window, or cover entities to monitor for
+        being left open.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: binary_sensor
+              device_class:
+                - door
+                - garage_door
+                - opening
+                - window
+            - domain: cover
+    occupancy_sensors:
+      name: Area or Zone Occupancy Sensors
+      description: >
+        One or more occupancy or motion binary sensors that must all be 'off'
+        (unoccupied/clear) for the alert to trigger. Leave empty to trigger based
+        purely on the door open duration.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: binary_sensor
+              device_class:
+                - occupancy
+                - motion
+                - presence
+            - domain: binary_sensor
+    unoccupied_open_duration:
+      name: Open & Unoccupied Duration
+      description: >
+        How long a door must remain open (and the monitored area must remain
+        unoccupied) before triggering the alert actions.
+      default:
+        hours: 0
+        minutes: 10
+        seconds: 0
+      selector:
+        duration:
+    alert_actions:
+      name: Alert Actions (When Left Open & Unoccupied)
+      description: >
+        Actions to run when a door is left open while the area is unoccupied
+        (for example: mobile push notifications, voice announcements, or indicator
+        LEDs). You can reference {{ open_door_names }} in message templates.
+      default: []
+      selector:
+        action:
+    clear_actions:
+      name: Recovery Actions When All Doors Close (Optional)
+      description: >
+        Optional actions to run once all monitored doors are closed again (for
+        example: clearing a persistent notification or turning off an indicator
+        LED).
+      default: []
+      selector:
+        action:
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  doors: !input door_sensors
+  occupancy_list: !input occupancy_sensors
+  open_door_entities: >
+    {{ expand(doors)
+       | selectattr('state', 'in', ['on', 'open', 'opening'])
+       | map(attribute='entity_id')
+       | list }}
+  open_door_names: >
+    {{ expand(doors)
+       | selectattr('state', 'in', ['on', 'open', 'opening'])
+       | map(attribute='name')
+       | join(', ') }}
+  area_is_empty: >
+    {{ (occupancy_list | count == 0)
+       or (expand(occupancy_list) | selectattr('state', 'eq', 'on') | list | count == 0) }}
+
+triggers:
+  - trigger: state
+    id: door_left_open
+    entity_id: !input door_sensors
+    to:
+      - "on"
+      - "open"
+    for: !input unoccupied_open_duration
+  - trigger: state
+    id: area_became_empty
+    entity_id: !input occupancy_sensors
+    to: "off"
+    for: !input unoccupied_open_duration
+  - trigger: state
+    id: door_closed
+    entity_id: !input door_sensors
+    to:
+      - "off"
+      - "closed"
+
+conditions: []
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id:
+              - door_left_open
+              - area_became_empty
+          - condition: template
+            value_template: "{{ (open_door_entities | count > 0) and area_is_empty }}"
+        sequence: !input alert_actions
+      - conditions:
+          - condition: trigger
+            id: door_closed
+          - condition: template
+            value_template: "{{ open_door_entities | count == 0 }}"
+        sequence: !input clear_actions
