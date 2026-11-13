@@ -1,0 +1,146 @@
+blueprint:
+  name: EV Unplugged Reminder
+  description: >
+    Checks at a scheduled evening time (and optionally after a late-night arrival)
+    whether an electric vehicle is home and still unplugged from its EV charger.
+    Supports an optional battery state-of-charge threshold and customizable
+    notification or voice announcement actions.
+  domain: automation
+  input:
+    vehicle_presence:
+      name: Vehicle Presence or Wi-Fi Sensor
+      description: >
+        Entity indicating the vehicle is at home (supports a binary_sensor where
+        'on' means connected/present, or a device_tracker where 'home' means present).
+      selector:
+        entity:
+          filter:
+            - domain:
+                - binary_sensor
+                - device_tracker
+    charger_plug_entity:
+      name: Charger Cable / Plug Status Entity
+      description: >
+        Sensor or binary sensor indicating whether the EV charger cable is plugged in.
+      selector:
+        entity:
+          filter:
+            - domain:
+                - sensor
+                - binary_sensor
+    unplugged_state:
+      name: Unplugged State Value
+      description: >
+        The state value reported by the Charger Cable / Plug Status Entity when the
+        vehicle is NOT plugged in (for example: Unplugged, off, or disconnected).
+      default: "Unplugged"
+      selector:
+        text:
+    reminder_time:
+      name: Evening Check Time
+      description: Daily time to check whether the vehicle is home and unplugged.
+      default: "21:00:00"
+      selector:
+        time:
+    check_late_arrival:
+      name: Also Check on Late Arrival After Check Time
+      description: >
+        If enabled, also checks if the vehicle arrives home after the Evening Check
+        Time and remains unplugged after the grace period below.
+      default: true
+      selector:
+        boolean:
+    late_arrival_grace_period:
+      name: Late Arrival Grace Period
+      description: >
+        How long to wait after arriving home (when arriving after the Evening Check
+        Time) before checking if the charger cable is still unplugged.
+      default:
+        hours: 0
+        minutes: 15
+        seconds: 0
+      selector:
+        duration:
+    battery_level_sensor:
+      name: Vehicle Battery Level Sensor (Optional)
+      description: >
+        Optional battery state-of-charge sensor (%). If selected, the reminder only
+        fires when the battery percentage is below the threshold below. Leave blank
+        to always remind when unplugged regardless of battery level.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: battery
+            - domain: sensor
+    battery_threshold:
+      name: Battery Level Threshold (%)
+      description: >
+        Only send the reminder if the Vehicle Battery Level Sensor is below this
+        percentage (ignored if no battery sensor is selected).
+      default: 80
+      selector:
+        number:
+          min: 10
+          max: 100
+          step: 5
+          unit_of_measurement: "%"
+    reminder_actions:
+      name: Reminder Actions
+      description: >
+        Notification, TTS announcement, or other actions to execute when the vehicle
+        is home and unplugged.
+      default: []
+      selector:
+        action:
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  vehicle_entity: !input vehicle_presence
+  plug_entity: !input charger_plug_entity
+  expected_unplugged: !input unplugged_state
+  check_time: !input reminder_time
+  enable_late_arrival: !input check_late_arrival
+  battery_sensor: !input battery_level_sensor
+  max_battery_pct: !input battery_threshold
+
+triggers:
+  - trigger: time
+    id: scheduled_check
+    at: !input reminder_time
+  - trigger: state
+    id: late_arrival_on
+    entity_id: !input vehicle_presence
+    to: "on"
+    for: !input late_arrival_grace_period
+  - trigger: state
+    id: late_arrival_home
+    entity_id: !input vehicle_presence
+    to: "home"
+    for: !input late_arrival_grace_period
+
+conditions:
+  # 1. Verify vehicle is currently home ('on' for binary_sensor or 'home' for device_tracker)
+  - condition: template
+    value_template: >
+      {{ is_state(vehicle_entity, 'on') or is_state(vehicle_entity, 'home') }}
+  # 2. If triggered by arrival, ensure late-arrival check is enabled and it is after reminder_time
+  - condition: template
+    value_template: >
+      {{ trigger.id == 'scheduled_check'
+         or (enable_late_arrival and now().strftime('%H:%M:%S') >= (check_time | string)) }}
+  # 3. Verify the charger cable is currently in the unplugged state (case-insensitive)
+  - condition: template
+    value_template: >
+      {{ states(plug_entity) | lower | trim == expected_unplugged | lower | trim }}
+  # 4. Optional Battery SoC Check: If a battery sensor is configured and valid, verify it is below battery_threshold
+  - condition: template
+    value_template: >
+      {{ battery_sensor == ''
+         or states(battery_sensor) in ['unknown', 'unavailable']
+         or (states(battery_sensor) | float(0)) < (max_battery_pct | float(80)) }}
+
+actions: !input reminder_actions
