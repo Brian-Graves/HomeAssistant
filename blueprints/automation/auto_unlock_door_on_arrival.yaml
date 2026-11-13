@@ -1,0 +1,99 @@
+blueprint:
+  name: Auto-Unlock Door on Arrival
+  description: >
+    Automatically unlocks a smart lock when a person or device tracker arrives at
+    a configurable target zone, with a configurable minimum away duration to prevent
+    false unlocks from brief indoor Wi-Fi/GPS blips and an optional door contact
+    sensor check.
+  domain: automation
+  input:
+    presence_entity:
+      name: Person or Device Tracker
+      description: The person or device tracker entity to monitor for arrival.
+      selector:
+        entity:
+          filter:
+            - domain:
+                - person
+                - device_tracker
+    target_zone:
+      name: Target Arrival Zone
+      description: The zone that triggers the unlock upon arrival.
+      default: zone.home
+      selector:
+        entity:
+          filter:
+            - domain: zone
+    door_lock:
+      name: Door Lock
+      description: The smart lock entity to unlock upon arrival.
+      selector:
+        entity:
+          filter:
+            - domain: lock
+    minimum_away_time:
+      name: Minimum Away Duration (Anti-Drift Filter)
+      description: >
+        Minimum time the person or tracker must have been away from the target zone
+        before arriving to trigger an unlock (set to 00:00:00 to disable). Prevents
+        brief indoor GPS or Wi-Fi drops from unlocking the door while already present.
+      default:
+        hours: 0
+        minutes: 3
+        seconds: 0
+      selector:
+        duration:
+    door_sensor:
+      name: Door Contact Sensor (Optional)
+      description: >
+        Optional door open/close contact sensor. If selected, the automation only
+        fires when the door is closed. Leave blank to unlock on arrival regardless
+        of door sensor state.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+              device_class:
+                - door
+                - opening
+                - garage_door
+                - window
+
+mode: single
+max_exceeded: silent
+
+variables:
+  selected_zone: !input target_zone
+  target_state: >
+    {{ 'home' if selected_zone == 'zone.home' else state_attr(selected_zone, 'friendly_name') }}
+  min_away: !input minimum_away_time
+  min_away_seconds: >
+    {{ (min_away.get('hours', 0) * 3600)
+       + (min_away.get('minutes', 0) * 60)
+       + min_away.get('seconds', 0) }}
+  selected_door_sensor: !input door_sensor
+
+triggers:
+  - trigger: state
+    entity_id: !input presence_entity
+
+conditions:
+  - condition: template
+    value_template: >
+      {{ trigger.to_state is not none
+         and trigger.from_state is not none
+         and trigger.to_state.state == target_state
+         and trigger.from_state.state != target_state
+         and trigger.from_state.state not in ['unavailable', 'unknown'] }}
+  - condition: template
+    value_template: >
+      {{ (trigger.to_state.last_changed - trigger.from_state.last_changed).total_seconds() >= (min_away_seconds | float(0)) }}
+  - condition: template
+    value_template: >
+      {{ selected_door_sensor == '' or is_state(selected_door_sensor, 'off') }}
+
+actions:
+  - action: lock.unlock
+    target:
+      entity_id: !input door_lock

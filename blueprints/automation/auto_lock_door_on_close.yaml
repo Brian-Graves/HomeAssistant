@@ -1,0 +1,79 @@
+blueprint:
+  name: Auto-Lock Door After Closing (With Contact Sensor Safety Check)
+  description: >
+    Automatically locks a smart lock after its door contact sensor closes and stays
+    closed for a configurable delay time. Includes a safety check so the deadbolt
+    never extends if the door is reopened, plus an optional toggle to also auto-lock
+    if the lock is unlocked and the door is never opened.
+  domain: automation
+  input:
+    door_lock:
+      name: Door Lock
+      description: The smart lock entity to automatically lock.
+      selector:
+        entity:
+          filter:
+            - domain: lock
+    door_sensor:
+      name: Door Contact Sensor
+      description: The door open/close contact sensor (off = closed, on = open).
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+              device_class:
+                - door
+                - opening
+                - garage_door
+                - window
+    lock_delay:
+      name: Lock Delay Time
+      description: How long the door must remain continuously closed before locking.
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 10
+      selector:
+        duration:
+    lock_if_unopened:
+      name: Also Auto-Lock If Unlocked Without Opening Door
+      description: >
+        If enabled, also locks the door if someone unlocks it while the door is
+        already closed and never opens the door within the delay time.
+      default: true
+      selector:
+        boolean:
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  also_lock_unopened: !input lock_if_unopened
+
+triggers:
+  - trigger: state
+    id: door_closed
+    entity_id: !input door_sensor
+    to: "off"
+    for: !input lock_delay
+  - trigger: state
+    id: unlocked_while_closed
+    entity_id: !input door_lock
+    to: "unlocked"
+    for: !input lock_delay
+
+conditions:
+  - condition: state
+    entity_id: !input door_sensor
+    state: "off"
+  - condition: state
+    entity_id: !input door_lock
+    state: "unlocked"
+  - condition: template
+    value_template: >
+      {{ trigger.id == 'door_closed' or also_lock_unopened }}
+
+actions:
+  - action: lock.lock
+    target:
+      entity_id: !input door_lock
