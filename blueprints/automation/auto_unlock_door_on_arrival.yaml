@@ -1,15 +1,16 @@
 blueprint:
   name: Auto-Unlock Door on Arrival
   description: >
-    Automatically unlocks a smart lock when a person or device tracker arrives at
-    a configurable target zone, with a configurable minimum away duration to prevent
-    false unlocks from brief indoor Wi-Fi/GPS blips and an optional door contact
-    sensor check.
+    Automatically unlocks a smart lock when a person or device tracker returns to
+    a configurable target zone after being outside that zone for at least a
+    configurable minimum away duration. Transitioning between other zones while
+    away (such as driving past a store zone near home) never resets the away
+    timer, and indoor GPS coordinate updates never falsely trigger the automation.
   domain: automation
   input:
     presence_entity:
       name: Person or Device Tracker
-      description: The person or device tracker entity to monitor for arrival.
+      description: The person or device tracker entity to monitor for departure and arrival.
       selector:
         entity:
           filter:
@@ -18,7 +19,7 @@ blueprint:
                 - device_tracker
     target_zone:
       name: Target Arrival Zone
-      description: The zone that triggers the unlock upon arrival.
+      description: The zone that triggers the unlock upon returning.
       default: zone.home
       selector:
         entity:
@@ -34,13 +35,13 @@ blueprint:
     minimum_away_time:
       name: Minimum Away Duration (Anti-Drift Filter)
       description: >
-        Minimum time the person or tracker must have been in its previous away state
-        before arriving to trigger an unlock (set to 00:00:00 to disable). Keep this
-        at 1 minute or less if you have other zones near your home that you drive
-        past shortly before arriving.
+        Minimum continuous time the person or tracker must be outside the Target
+        Arrival Zone before the automation arms for arrival. Prevents brief indoor
+        GPS or Wi-Fi drops from unlocking the door while already home, while
+        ignoring transitions between other away zones.
       default:
         hours: 0
-        minutes: 1
+        minutes: 3
         seconds: 0
       selector:
         duration:
@@ -48,7 +49,7 @@ blueprint:
       name: Door Contact Sensor (Optional)
       description: >
         Optional door open/close contact sensor. If selected, the automation only
-        fires when the door is closed. Leave blank to unlock on arrival regardless
+        unlocks when the door is closed. Leave blank to unlock on arrival regardless
         of door sensor state.
       default: ""
       selector:
@@ -61,7 +62,7 @@ blueprint:
                 - garage_door
                 - window
 
-mode: single
+mode: restart
 max_exceeded: silent
 
 trigger_variables:
@@ -75,37 +76,28 @@ variables:
   selected_zone: !input target_zone
   target_state: >
     {{ 'home' if selected_zone == 'zone.home' else state_attr(selected_zone, 'friendly_name') }}
-  min_away: !input minimum_away_time
-  min_away_seconds: >
-    {{ (min_away.get('hours', 0) * 3600)
-       + (min_away.get('minutes', 0) * 60)
-       + min_away.get('seconds', 0) }}
   selected_door_sensor: !input door_sensor
 
 triggers:
-  # Fires ONLY when the entity's state transitions INTO the Target Arrival Zone
-  # (Ignores GPS coordinate/accuracy attribute updates while already in the zone)
+  # Phase 1 (Arm on Departure): Fires once the entity has been continuously outside
+  # the Target Arrival Zone (whether 'not_home' or in any other zone) for minimum_away_time.
   - trigger: template
-    value_template: "{{ states(tracked_entity) == target_state }}"
+    value_template: >
+      {{ states(tracked_entity) not in [target_state, 'unavailable', 'unknown'] }}
+    for: !input minimum_away_time
 
-conditions:
-  # 1. Verify the previous state was a real away/zone state (not startup unavailable/unknown)
-  - condition: template
-    value_template: >
-      {{ trigger.from_state is not none
-         and trigger.to_state is not none
-         and trigger.from_state.state != target_state
-         and trigger.from_state.state not in ['unavailable', 'unknown'] }}
-  # 2. Anti-Drift Check: Ensure the person/tracker was in the prior state for at least minimum_away_time
-  - condition: template
-    value_template: >
-      {{ (trigger.to_state.last_changed - trigger.from_state.last_changed).total_seconds() >= (min_away_seconds | float(0)) }}
-  # 3. Optional Door Contact Check: If a door sensor was selected, check that it is closed ('off')
+conditions: []
+
+actions:
+  # Phase 2 (Wait for Return): Wait until the entity transitions back into the Target Arrival Zone
+  - wait_for_trigger:
+      - trigger: template
+        value_template: "{{ states(tracked_entity) == target_state }}"
+    continue_on_timeout: false
+  # Verify optional door contact sensor is closed ('off') before unlocking
   - condition: template
     value_template: >
       {{ selected_door_sensor == '' or is_state(selected_door_sensor, 'off') }}
-
-actions:
   - action: lock.unlock
     target:
       entity_id: !input door_lock
