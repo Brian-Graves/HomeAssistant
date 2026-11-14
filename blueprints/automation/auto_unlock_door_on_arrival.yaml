@@ -34,12 +34,13 @@ blueprint:
     minimum_away_time:
       name: Minimum Away Duration (Anti-Drift Filter)
       description: >
-        Minimum time the person or tracker must have been away from the target zone
-        before arriving to trigger an unlock (set to 00:00:00 to disable). Prevents
-        brief indoor GPS or Wi-Fi drops from unlocking the door while already present.
+        Minimum time the person or tracker must have been in its previous away state
+        before arriving to trigger an unlock (set to 00:00:00 to disable). Keep this
+        at 1 minute or less if you have other zones near your home that you drive
+        past shortly before arriving.
       default:
         hours: 0
-        minutes: 3
+        minutes: 1
         seconds: 0
       selector:
         duration:
@@ -63,7 +64,14 @@ blueprint:
 mode: single
 max_exceeded: silent
 
+trigger_variables:
+  tracked_entity: !input presence_entity
+  selected_zone: !input target_zone
+  target_state: >
+    {{ 'home' if selected_zone == 'zone.home' else state_attr(selected_zone, 'friendly_name') }}
+
 variables:
+  tracked_entity: !input presence_entity
   selected_zone: !input target_zone
   target_state: >
     {{ 'home' if selected_zone == 'zone.home' else state_attr(selected_zone, 'friendly_name') }}
@@ -75,20 +83,24 @@ variables:
   selected_door_sensor: !input door_sensor
 
 triggers:
-  - trigger: state
-    entity_id: !input presence_entity
+  # Fires ONLY when the entity's state transitions INTO the Target Arrival Zone
+  # (Ignores GPS coordinate/accuracy attribute updates while already in the zone)
+  - trigger: template
+    value_template: "{{ states(tracked_entity) == target_state }}"
 
 conditions:
+  # 1. Verify the previous state was a real away/zone state (not startup unavailable/unknown)
   - condition: template
     value_template: >
-      {{ trigger.to_state is not none
-         and trigger.from_state is not none
-         and trigger.to_state.state == target_state
+      {{ trigger.from_state is not none
+         and trigger.to_state is not none
          and trigger.from_state.state != target_state
          and trigger.from_state.state not in ['unavailable', 'unknown'] }}
+  # 2. Anti-Drift Check: Ensure the person/tracker was in the prior state for at least minimum_away_time
   - condition: template
     value_template: >
       {{ (trigger.to_state.last_changed - trigger.from_state.last_changed).total_seconds() >= (min_away_seconds | float(0)) }}
+  # 3. Optional Door Contact Check: If a door sensor was selected, check that it is closed ('off')
   - condition: template
     value_template: >
       {{ selected_door_sensor == '' or is_state(selected_door_sensor, 'off') }}
