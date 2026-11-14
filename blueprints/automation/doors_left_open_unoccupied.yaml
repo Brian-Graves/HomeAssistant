@@ -2,10 +2,11 @@ blueprint:
   name: Doors Left Open While Area Unoccupied
   description: >
     Triggers when one or more door or cover sensors remain open while all selected
-    occupancy sensors (such as camera zone occupancy or room motion sensors) report
-    unoccupied for a configurable duration. Also exposes {{ open_door_names }} and
-    {{ open_door_entities }} variables for use inside notification or TTS actions,
-    plus an optional recovery action block when all monitored doors close.
+    people are away from home and/or all selected occupancy sensors (such as camera
+    zone occupancy or motion sensors) report unoccupied for a configurable duration.
+    Exposes {{ open_door_names }} and {{ open_door_entities }} variables for use
+    inside notification or TTS actions, plus an optional recovery action block when
+    all monitored doors close.
   domain: automation
   input:
     door_sensors:
@@ -24,12 +25,23 @@ blueprint:
                 - opening
                 - window
             - domain: cover
-    occupancy_sensors:
-      name: Area or Zone Occupancy Sensors
+    people_entities:
+      name: People Who Must Be Away (Person Entities)
       description: >
-        One or more occupancy or motion binary sensors that must all be 'off'
-        (unoccupied/clear) for the alert to trigger. Leave empty to trigger based
-        purely on the door open duration.
+        One or more person entities that must all be away ('not_home' / not 'home')
+        for the alert to trigger. Leave empty to ignore person presence.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: person
+    occupancy_sensors:
+      name: Area or Zone Occupancy Sensors (Optional)
+      description: >
+        Optional occupancy or motion binary sensors (such as camera zone occupancy)
+        that must also be 'off' (unoccupied/clear) for the alert to trigger. Leave
+        empty to rely solely on the selected Person entities.
       default: []
       selector:
         entity:
@@ -42,31 +54,28 @@ blueprint:
                 - presence
             - domain: binary_sensor
     unoccupied_open_duration:
-      name: Open & Unoccupied Duration
+      name: Open & Away/Unoccupied Duration
       description: >
-        How long a door must remain open (and the monitored area must remain
-        unoccupied) before triggering the alert actions.
+        How long a door must remain open while all selected people are away (and
+        selected occupancy sensors are clear) before triggering the alert actions.
       default:
         hours: 0
-        minutes: 10
+        minutes: 5
         seconds: 0
       selector:
         duration:
     alert_actions:
-      name: Alert Actions (When Left Open & Unoccupied)
+      name: Alert Actions (When Left Open While Away/Unoccupied)
       description: >
-        Actions to run when a door is left open while the area is unoccupied
-        (for example: mobile push notifications, voice announcements, or indicator
-        LEDs). You can reference {{ open_door_names }} in message templates.
+        Actions to run when a door is left open while everyone is away and the area
+        is unoccupied. You can reference {{ open_door_names }} in message templates.
       default: []
       selector:
         action:
     clear_actions:
       name: Recovery Actions When All Doors Close (Optional)
       description: >
-        Optional actions to run once all monitored doors are closed again (for
-        example: clearing a persistent notification or turning off an indicator
-        LED).
+        Optional actions to run once all monitored doors are closed again.
       default: []
       selector:
         action:
@@ -76,6 +85,7 @@ max_exceeded: silent
 
 variables:
   doors: !input door_sensors
+  people_list: !input people_entities
   occupancy_list: !input occupancy_sensors
   open_door_entities: >
     {{ expand(doors)
@@ -87,6 +97,9 @@ variables:
        | selectattr('state', 'in', ['on', 'open', 'opening'])
        | map(attribute='name')
        | join(', ') }}
+  all_people_away: >
+    {{ (people_list | count == 0)
+       or (expand(people_list) | selectattr('state', 'eq', 'home') | list | count == 0) }}
   area_is_empty: >
     {{ (occupancy_list | count == 0)
        or (expand(occupancy_list) | selectattr('state', 'eq', 'on') | list | count == 0) }}
@@ -98,6 +111,11 @@ triggers:
     to:
       - "on"
       - "open"
+    for: !input unoccupied_open_duration
+  - trigger: state
+    id: person_left_home
+    entity_id: !input people_entities
+    from: "home"
     for: !input unoccupied_open_duration
   - trigger: state
     id: area_became_empty
@@ -119,9 +137,10 @@ actions:
           - condition: trigger
             id:
               - door_left_open
+              - person_left_home
               - area_became_empty
           - condition: template
-            value_template: "{{ (open_door_entities | count > 0) and area_is_empty }}"
+            value_template: "{{ (open_door_entities | count > 0) and all_people_away and area_is_empty }}"
         sequence: !input alert_actions
       - conditions:
           - condition: trigger
